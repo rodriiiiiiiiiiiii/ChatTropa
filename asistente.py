@@ -7,6 +7,7 @@ import gspread
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
+from google.auth.transport.requests import Request
 from dotenv import load_dotenv
 
 # --- 1. CARGA DE CONFIGURACION ---
@@ -187,8 +188,21 @@ def ejecutar_asistente():
     print("[SISTEMA] Iniciando Agente de Asistencia Tropa 194...")
     
     # 3.1 Inicializacion de APIs Google
-    flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
-    creds = flow.run_local_server(port=0)
+    creds = None
+    # Si existe el archivo token.json, cargamos las credenciales de ahí
+    if os.path.exists('token.json'):
+        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+        
+    # Si no hay credenciales válidas disponibles, obligamos al usuario a iniciar sesión
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
+            creds = flow.run_local_server(port=0)
+        # Guardamos las credenciales para la próxima vez (¡Y para GitHub!)
+        with open('token.json', 'w') as token:
+            token.write(creds.to_json())
     
     gc = gspread.authorize(creds)
     hoja = gc.open("Asistencia").worksheet("ASISTENCIA")
