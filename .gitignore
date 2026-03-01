@@ -1,0 +1,8 @@
+# Secretos y credenciales
+.env
+credentials.json
+token.json
+
+# Archivos de Python que no hacen falta
+__pycache__/
+*.pyc
