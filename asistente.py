@@ -79,27 +79,26 @@ def analizar_con_ia(texto_correo, nombres_validos, eventos_validos):
     prompt = f"""
     Eres el secretario scout de la Tropa Waconda 194. Lee este correo (Asunto y Cuerpo) y extrae la información en formato JSON estricto.
     
-    Clasifica el correo en UNO de estos 4 tipos ("tipo"):
+    Clasifica CADA NIÑO mencionado en UNO de estos 4 tipos ("tipo"):
     - "SOLO_ASISTENCIA": Confirman asistencia o ausencia, sin dudas.
     - "ASISTENCIA_Y_PREGUNTA": Confirman asistencia/ausencia Y ADEMÁS hacen una pregunta a los jefes.
     - "SOLO_PREGUNTA": Solo hacen una pregunta, no mencionan asistencia.
     - "IRRELEVANTE": Publicidad, spam, o correos que no encajan.
 
-    CONSTRICCIONES DE DATOS ESTRICTAS:
-    - Para "nombre": DEBES elegir exactamente uno de esta lista: {nombres_validos}. Si hay dudas o solo dicen un nombre común, infiérelo si es único. Si no, pon null.
-    - Para "evento": DEBES elegir exactamente uno de esta lista: {eventos_validos}. Presta MUCHA ATENCIÓN al "ASUNTO", la fecha suele estar ahí.
+    REGLAS Y CONSTRICCIONES ESTRICTAS:
+    1. MULTIPLES NIÑOS (HERMANOS): Si el correo habla de varios niños, extrae un registro SEPARADO para cada uno. Devuelve SIEMPRE una LISTA de objetos JSON.
+    2. NOMBRES: Para "nombre", DEBES elegir exactamente uno de esta lista: {nombres_validos}. Infiérelo si es único. Si no, pon null.
+    3. EVENTOS: Para "evento", DEBES elegir exactamente uno de esta lista: {eventos_validos}. Presta MUCHA ATENCIÓN al "ASUNTO".
+    4. ASISTENCIA: "Sí" o "No". IMPORTANTE: Expresiones como "el niño irá", "sí irá", "confirma", o "contad con él/ella" significan estrictamente "Sí". Si no se menciona asistencia, pon null.
 
-    Campos a extraer (si no aplican, pon null):
-    1. "tipo": (Uno de los 4 mencionados)
-    2. "nombre": Coincidencia exacta de la lista.
-    3. "evento": Coincidencia exacta de la lista.
-    4. "asistencia": "Sí" o "No".
-    5. "pregunta": Texto de la duda del padre.
+    Ejemplo de formato esperado (Devuelve ÚNICAMENTE un ARRAY JSON válido, sin Markdown):
+    [
+      {{"tipo": "...", "nombre": "...", "evento": "...", "asistencia": "Sí", "pregunta": "..."}},
+      {{"tipo": "...", "nombre": "...", "evento": "...", "asistencia": "No", "pregunta": null}}
+    ]
 
     Correo a analizar:
     "{texto_correo}"
-    
-    Devuelve ÚNICAMENTE un JSON válido, sin bloques de código Markdown alrededor.
     """
     
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key={GEMINI_API_KEY}"
@@ -127,14 +126,14 @@ def analizar_con_ia(texto_correo, nombres_validos, eventos_validos):
                 
             else:
                 print(f"[ERROR API GEMINI] Código {response.status_code}: {response.text}")
-                return {"tipo": "IRRELEVANTE", "error": f"HTTP {response.status_code}"}
+                return [{"tipo": "IRRELEVANTE", "error": f"HTTP {response.status_code}"}]
                 
         except Exception as e:
             print(f"[ERROR] Fallo en la conexión directa con Gemini: {e}")
-            return {"tipo": "IRRELEVANTE", "error": str(e)}
+            return [{"tipo": "IRRELEVANTE", "error": str(e)}]
 
     print("[ERROR] Múltiples reintentos fallidos. Saltando correo.")
-    return {"tipo": "IRRELEVANTE", "error": "Servidor no disponible tras 3 intentos"}
+    return [{"tipo": "IRRELEVANTE", "error": "Servidor no disponible tras 3 intentos"}]
 
 def apuntar_en_excel(hoja, nombre_scout, evento, valor_asistencia):
     """Actualiza la celda en Sheets buscando coordenadas exactas."""
@@ -189,18 +188,15 @@ def ejecutar_asistente():
     
     # 3.1 Inicializacion de APIs Google
     creds = None
-    # Si existe el archivo token.json, cargamos las credenciales de ahí
     if os.path.exists('token.json'):
         creds = Credentials.from_authorized_user_file('token.json', SCOPES)
         
-    # Si no hay credenciales válidas disponibles, obligamos al usuario a iniciar sesión
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
             flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
             creds = flow.run_local_server(port=0)
-        # Guardamos las credenciales para la próxima vez (¡Y para GitHub!)
         with open('token.json', 'w') as token:
             token.write(creds.to_json())
     
@@ -213,14 +209,10 @@ def ejecutar_asistente():
     nombres_validos = [n for n in hoja.col_values(1)[2:] if n.strip()] 
     eventos_validos = [e for e in hoja.row_values(2)[1:] if e.strip()]
 
-    # Obtenemos el ID de la etiqueta
     id_etiqueta_bot = obtener_id_etiqueta(gmail_service, "Procesado_IA")
 
     # 3.3 Recuperacion de mensajes
     print("[SISTEMA] Consultando bandeja de entrada...")
-    # Buscamos correos que NO tengan la etiqueta, pero limitamos a los últimos 15 días 
-    # por seguridad (para no atascar la API buscando en años pasados)
-    # Añadimos 'in:inbox' para buscar solo en la bandeja de entrada y '-from:me' para ignorar nuestras respuestas
     query = 'in:inbox -label:Procesado_IA newer_than:15d -from:me'
     resultados = gmail_service.users().messages().list(userId='me', q=query).execute()
     mensajes = resultados.get('messages', [])
@@ -240,40 +232,48 @@ def ejecutar_asistente():
         mensaje_completo = gmail_service.users().messages().get(userId='me', id=correo_id, format='full').execute()
         texto_correo = decodificar_correo(mensaje_completo)
         
-        # 3.4 Inferencia de IA
-        datos_ia = analizar_con_ia(texto_correo, nombres_validos, eventos_validos)
-        tipo = datos_ia.get('tipo')
-        nombre = datos_ia.get('nombre')
-        asistencia = datos_ia.get('asistencia')
-        pregunta = datos_ia.get('pregunta')
+        # 3.4 Inferencia de IA (Ahora devuelve una lista de registros)
+        datos_ia_lista = analizar_con_ia(texto_correo, nombres_validos, eventos_validos)
         
-        print(f"[DEBUG] Clasificación: {tipo}")
-        if nombre: print(f"[DEBUG] Nombre detectado: {nombre}")
-        if datos_ia.get('evento'): print(f"[DEBUG] Evento detectado: {datos_ia.get('evento')}")
-        
-        # 3.5 Lógica
-        if tipo == 'SOLO_ASISTENCIA':
-            if apuntar_en_excel(hoja, nombre, datos_ia.get('evento'), asistencia):
-                print(f"[EXITO] Asistencia '{asistencia}' registrada para '{nombre}'.")
+        # Por seguridad, si la IA devolvió un diccionario único en vez de lista, lo envolvemos
+        if isinstance(datos_ia_lista, dict):
+            datos_ia_lista = [datos_ia_lista]
+            
+        # 3.5 Lógica por cada registro/niño encontrado en el correo
+        for datos_ia in datos_ia_lista:
+            tipo = datos_ia.get('tipo')
+            nombre = datos_ia.get('nombre')
+            asistencia = datos_ia.get('asistencia')
+            pregunta = datos_ia.get('pregunta')
+            evento = datos_ia.get('evento')
+            
+            print(f"[DEBUG] Clasificación: {tipo} | Nombre: {nombre} | Evento: {evento}")
+            
+            if tipo == 'SOLO_ASISTENCIA':
+                if apuntar_en_excel(hoja, nombre, evento, asistencia):
+                    print(f"[EXITO] Asistencia '{asistencia}' registrada para '{nombre}'.")
+                    
+            elif tipo == 'ASISTENCIA_Y_PREGUNTA':
+                if apuntar_en_excel(hoja, nombre, evento, asistencia):
+                    print(f"[EXITO] Asistencia registrada para '{nombre}'.")
                 
-        elif tipo == 'ASISTENCIA_Y_PREGUNTA':
-            if apuntar_en_excel(hoja, nombre, datos_ia.get('evento'), asistencia):
-                print(f"[EXITO] Asistencia registrada para '{nombre}'.")
-            
-            mensaje_tg = f"🏕️ *Asistencia y Duda*\nFamilia de {nombre}: Confirma que *{asistencia}* asiste.\n\n💬 Pregunta: _{pregunta}_"
-            avisar_telegram(mensaje_tg)
-            print("[EXITO] Notificación enviada al Kraal.")
-            
-        elif tipo == 'SOLO_PREGUNTA':
-            mensaje_tg = f"❓ *Duda Administrativa*\nFamilia de {nombre} pregunta:\n\n💬 _{pregunta}_"
-            avisar_telegram(mensaje_tg)
-            print("[EXITO] Notificación de duda enviada.")
-            
-        elif tipo == 'IRRELEVANTE':
-            print("[INFO] Correo descartado por irrelevante.")
-            
-        else:
-            print("[AVISO] Categoría desconocida. Omitiendo.")
+                # Inyectamos el Evento en el título del mensaje para Telegram
+                evt_texto = f" ({evento})" if evento else ""
+                mensaje_tg = f"🏕️ *Asistencia y Duda{evt_texto}*\nFamilia de {nombre}: Confirma que *{asistencia}* asiste.\n\n💬 Pregunta: _{pregunta}_"
+                avisar_telegram(mensaje_tg)
+                print("[EXITO] Notificación enviada al Kraal.")
+                
+            elif tipo == 'SOLO_PREGUNTA':
+                evt_texto = f" ({evento})" if evento else ""
+                mensaje_tg = f"❓ *Duda Administrativa{evt_texto}*\nFamilia de {nombre} pregunta:\n\n💬 _{pregunta}_"
+                avisar_telegram(mensaje_tg)
+                print("[EXITO] Notificación de duda enviada.")
+                
+            elif tipo == 'IRRELEVANTE':
+                print("[INFO] Registro descartado por irrelevante.")
+                
+            else:
+                print("[AVISO] Categoría desconocida. Omitiendo.")
 
         marcar_como_procesado(gmail_service, correo_id, id_etiqueta_bot)
         print("[INFO] Etiqueta 'Procesado_IA' añadida con éxito.")
