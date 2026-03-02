@@ -12,18 +12,19 @@ from dotenv import load_dotenv
 
 # --- 1. CARGA DE CONFIGURACION ---
 load_dotenv()
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+# Cargamos todas las keys que tengamos y filtramos las que estén vacías
+GEMINI_API_KEYS = [
+    os.getenv("GEMINI_API_KEY_1"),
+    os.getenv("GEMINI_API_KEY_2"),
+    os.getenv("GEMINI_API_KEY_3")
+]
+GEMINI_API_KEYS = [k for k in GEMINI_API_KEYS if k] # Quita los nulos por si solo usas 2
+
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-SCOPES = [
-    'https://www.googleapis.com/auth/spreadsheets', 
-    'https://www.googleapis.com/auth/drive',
-    'https://www.googleapis.com/auth/gmail.modify'
-]
-
-if not GEMINI_API_KEY:
-    print("[ERROR] No se ha encontrado la GEMINI_API_KEY en el archivo .env")
+if not GEMINI_API_KEYS:
+    print("[ERROR] No se han encontrado API Keys en el archivo .env")
     exit(1)
 
 # --- 2. FUNCIONES DE SERVICIO ---
@@ -110,6 +111,16 @@ def analizar_con_ia(texto_correo, nombres_validos, eventos_validos):
     
     max_reintentos = 3
     for intento in range(max_reintentos):
+        # ROTACIÓN DE CLAVES: Elegimos la llave 0, luego la 1, luego la 2...
+        llave_actual = GEMINI_API_KEYS[intento % len(GEMINI_API_KEYS)]
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key={llave_actual}"
+        
+        headers = {'Content-Type': 'application/json'}
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": 0.1}
+        }
+
         try:
             response = requests.post(url, headers=headers, json=payload)
 
@@ -119,21 +130,28 @@ def analizar_con_ia(texto_correo, nombres_validos, eventos_validos):
                 texto_respuesta = texto_respuesta.replace('```json', '').replace('```', '').strip()
                 return json.loads(texto_respuesta)
                 
-            elif response.status_code in [503, 429]:
-                print(f"[AVISO] Servidor saturado (Error {response.status_code}). Esperando 20s... (Intento {intento+1}/{max_reintentos})")
+            elif response.status_code == 429:
+                # Si nos quedamos sin cuota, avisamos y probamos casi inmediatamente con la SIGUIENTE llave
+                print(f"[AVISO] Límite de cuota (429). Rotando a la siguiente API Key... (Intento {intento+1}/{max_reintentos})")
+                time.sleep(2) 
+                continue
+                
+            elif response.status_code == 503:
+                # Si el servidor general de Google está caído, sí esperamos 20s
+                print(f"[AVISO] Servidor saturado (503). Esperando 20s... (Intento {intento+1}/{max_reintentos})")
                 time.sleep(20)
                 continue
                 
             else:
                 print(f"[ERROR API GEMINI] Código {response.status_code}: {response.text}")
-                return [{"tipo": "IRRELEVANTE", "error": f"HTTP {response.status_code}"}]
+                return [{"tipo": "ERROR", "error": f"HTTP {response.status_code}"}]
                 
         except Exception as e:
             print(f"[ERROR] Fallo en la conexión directa con Gemini: {e}")
-            return [{"tipo": "IRRELEVANTE", "error": str(e)}]
+            return [{"tipo": "ERROR", "error": str(e)}]
 
     print("[ERROR] Múltiples reintentos fallidos. Saltando correo.")
-    return [{"tipo": "IRRELEVANTE", "error": "Servidor no disponible tras 3 intentos"}]
+    return [{"tipo": "ERROR", "error": "Servidor no disponible tras 3 intentos"}]
 
 def apuntar_en_excel(hoja, nombre_scout, evento, valor_asistencia):
     """Actualiza la celda en Sheets buscando coordenadas exactas."""
@@ -232,12 +250,14 @@ def ejecutar_asistente():
         mensaje_completo = gmail_service.users().messages().get(userId='me', id=correo_id, format='full').execute()
         texto_correo = decodificar_correo(mensaje_completo)
         
-        # 3.4 Inferencia de IA (Ahora devuelve una lista de registros)
+        # 3.4 Inferencia de IA
         datos_ia_lista = analizar_con_ia(texto_correo, nombres_validos, eventos_validos)
         
-        # Por seguridad, si la IA devolvió un diccionario único en vez de lista, lo envolvemos
         if isinstance(datos_ia_lista, dict):
             datos_ia_lista = [datos_ia_lista]
+            
+        # Variable para controlar si todo ha ido bien
+        procesado_con_exito = True 
             
         # 3.5 Lógica por cada registro/niño encontrado en el correo
         for datos_ia in datos_ia_lista:
@@ -246,6 +266,12 @@ def ejecutar_asistente():
             asistencia = datos_ia.get('asistencia')
             pregunta = datos_ia.get('pregunta')
             evento = datos_ia.get('evento')
+            
+            # SI HAY ERROR DE API, PARAMOS Y NO PONEMOS ETIQUETA
+            if tipo == 'ERROR':
+                print(f"[AVISO] Error de la IA detectado. El correo se dejará sin etiquetar para reintentar luego.")
+                procesado_con_exito = False
+                break # Salimos del bucle de niños, ya sabemos que el correo falló
             
             print(f"[DEBUG] Clasificación: {tipo} | Nombre: {nombre} | Evento: {evento}")
             
@@ -257,7 +283,6 @@ def ejecutar_asistente():
                 if apuntar_en_excel(hoja, nombre, evento, asistencia):
                     print(f"[EXITO] Asistencia registrada para '{nombre}'.")
                 
-                # Inyectamos el Evento en el título del mensaje para Telegram
                 evt_texto = f" ({evento})" if evento else ""
                 mensaje_tg = f"🏕️ *Asistencia y Duda{evt_texto}*\nFamilia de {nombre}: Confirma que *{asistencia}* asiste.\n\n💬 Pregunta: _{pregunta}_"
                 avisar_telegram(mensaje_tg)
@@ -275,8 +300,12 @@ def ejecutar_asistente():
             else:
                 print("[AVISO] Categoría desconocida. Omitiendo.")
 
-        marcar_como_procesado(gmail_service, correo_id, id_etiqueta_bot)
-        print("[INFO] Etiqueta 'Procesado_IA' añadida con éxito.")
+        # SOLO PONEMOS LA ETIQUETA SI NO HUBO ERROR CRÍTICO
+        if procesado_con_exito:
+            marcar_como_procesado(gmail_service, correo_id, id_etiqueta_bot)
+            print("[INFO] Etiqueta 'Procesado_IA' añadida con éxito.")
+        else:
+            print("[INFO] Saltando el etiquetado de este correo debido a errores.")
 
         # 3.6 Pausa de Rate Limiting
         if i < total_mensajes:
