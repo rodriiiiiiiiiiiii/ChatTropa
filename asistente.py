@@ -17,11 +17,19 @@ GEMINI_API_KEYS = [
     os.getenv("GEMINI_API_KEY_1"),
     os.getenv("GEMINI_API_KEY_2"),
     os.getenv("GEMINI_API_KEY_3")
+    os.getenv("GEMINI_API_KEY_4"),
+    os.getenv("GEMINI_API_KEY_5")
 ]
-GEMINI_API_KEYS = [k for k in GEMINI_API_KEYS if k] # Quita los nulos por si solo usas 2
+GEMINI_API_KEYS = [k for k in GEMINI_API_KEYS if k]
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+
+SCOPES = [
+    'https://www.googleapis.com/auth/spreadsheets', 
+    'https://www.googleapis.com/auth/drive',
+    'https://www.googleapis.com/auth/gmail.modify'
+]
 
 if not GEMINI_API_KEYS:
     print("[ERROR] No se han encontrado API Keys en el archivo .env")
@@ -76,42 +84,37 @@ def decodificar_correo(mensaje_gmail):
     return ""
 
 def analizar_con_ia(texto_correo, nombres_validos, eventos_validos):
-    """Llamada DIRECTA a la API REST de Gemini con sistema de REINTENTOS"""
+    """Llamada DIRECTA a la API REST de Gemini con REINTENTOS, ROTACIÓN y NUEVAS REGLAS"""
     prompt = f"""
     Eres el secretario scout de la Tropa Waconda 194. Lee este correo (Asunto y Cuerpo) y extrae la información en formato JSON estricto.
     
     Clasifica CADA NIÑO mencionado en UNO de estos 4 tipos ("tipo"):
-    - "SOLO_ASISTENCIA": Confirman asistencia o ausencia, sin dudas.
-    - "ASISTENCIA_Y_PREGUNTA": Confirman asistencia/ausencia Y ADEMÁS hacen una pregunta a los jefes.
-    - "SOLO_PREGUNTA": Solo hacen una pregunta, no mencionan asistencia.
+    - "SOLO_ASISTENCIA": Confirman asistencia o ausencia, sin dejar ningún comentario extra.
+    - "ASISTENCIA_Y_COMENTARIO": Confirman asistencia/ausencia Y ADEMÁS añaden una duda, mensaje o aclaración de horario (ej. "llegará más tarde por partido").
+    - "SOLO_COMENTARIO": Solo hacen una pregunta o comentario, no mencionan asistencia.
     - "IRRELEVANTE": Publicidad, spam, o correos que no encajan.
 
     REGLAS Y CONSTRICCIONES ESTRICTAS:
-    1. MULTIPLES NIÑOS (HERMANOS): Si el correo habla de varios niños, extrae un registro SEPARADO para cada uno. Devuelve SIEMPRE una LISTA de objetos JSON.
-    2. NOMBRES: Para "nombre", DEBES elegir exactamente uno de esta lista: {nombres_validos}. Infiérelo si es único. Si no, pon null.
-    3. EVENTOS: Para "evento", DEBES elegir exactamente uno de esta lista: {eventos_validos}. Presta MUCHA ATENCIÓN al "ASUNTO".
-    4. ASISTENCIA: "Sí" o "No". IMPORTANTE: Expresiones como "el niño irá", "sí irá", "confirma", o "contad con él/ella" significan estrictamente "Sí". Si no se menciona asistencia, pon null.
+    1. IGNORAR HISTORIAL: Ignora TODO el texto que forme parte de un correo reenviado o historial (suele estar debajo de "De: Tropa Waconda", "Enviado el:", o "El ... escribió:"). Lee SOLO lo que ha escrito el padre arriba del todo.
+    2. MULTIPLES NIÑOS (HERMANOS): Extrae un registro SEPARADO para cada niño mencionado. Devuelve SIEMPRE una LISTA de objetos JSON.
+    3. NOMBRES: Elige exactamente uno de esta lista: {nombres_validos}. 
+       * REGLA JULIA: Si el correo menciona juntas a "Clara y Julia", asume estrictamente que se refiere a "Julia Torrens" por ser hermanas.
+    4. EVENTOS: Elige exactamente uno de esta lista: {eventos_validos}. Presta MUCHA ATENCIÓN al "ASUNTO".
+    5. ASISTENCIA: "Sí" o "No". Expresiones como "irá", "sí irá", "confirma", o "contad con él/ella" significan "Sí". Si no mencionan asistencia, pon null.
+    6. COMENTARIO: Extrae el texto de la duda o aclaración. Si no hay NADA extra, pon null (no pongas la palabra "None").
 
     Ejemplo de formato esperado (Devuelve ÚNICAMENTE un ARRAY JSON válido, sin Markdown):
     [
-      {{"tipo": "...", "nombre": "...", "evento": "...", "asistencia": "Sí", "pregunta": "..."}},
-      {{"tipo": "...", "nombre": "...", "evento": "...", "asistencia": "No", "pregunta": null}}
+      {{"tipo": "ASISTENCIA_Y_COMENTARIO", "nombre": "Pablo Robledo", "evento": "Acampada", "asistencia": "Sí", "comentario": "Llegará a las 18:00 por un partido"}},
+      {{"tipo": "SOLO_ASISTENCIA", "nombre": "Julia Torrens", "evento": "Acampada", "asistencia": "No", "comentario": null}}
     ]
 
     Correo a analizar:
     "{texto_correo}"
     """
     
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key={GEMINI_API_KEY}"
-    headers = {'Content-Type': 'application/json'}
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.1}
-    }
-    
     max_reintentos = 3
     for intento in range(max_reintentos):
-        # ROTACIÓN DE CLAVES: Elegimos la llave 0, luego la 1, luego la 2...
         llave_actual = GEMINI_API_KEYS[intento % len(GEMINI_API_KEYS)]
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key={llave_actual}"
         
@@ -131,13 +134,11 @@ def analizar_con_ia(texto_correo, nombres_validos, eventos_validos):
                 return json.loads(texto_respuesta)
                 
             elif response.status_code == 429:
-                # Si nos quedamos sin cuota, avisamos y probamos casi inmediatamente con la SIGUIENTE llave
                 print(f"[AVISO] Límite de cuota (429). Rotando a la siguiente API Key... (Intento {intento+1}/{max_reintentos})")
                 time.sleep(2) 
                 continue
                 
             elif response.status_code == 503:
-                # Si el servidor general de Google está caído, sí esperamos 20s
                 print(f"[AVISO] Servidor saturado (503). Esperando 20s... (Intento {intento+1}/{max_reintentos})")
                 time.sleep(20)
                 continue
@@ -219,7 +220,7 @@ def ejecutar_asistente():
             token.write(creds.to_json())
     
     gc = gspread.authorize(creds)
-    hoja = gc.open("Asistencia").worksheet("ASISTENCIA")
+    hoja = gc.open("Asistencia_pruebas_IA").worksheet("ASISTENCIA")
     gmail_service = build('gmail', 'v1', credentials=creds)
     
     # 3.2 Cargar contexto de validación
@@ -256,7 +257,6 @@ def ejecutar_asistente():
         if isinstance(datos_ia_lista, dict):
             datos_ia_lista = [datos_ia_lista]
             
-        # Variable para controlar si todo ha ido bien
         procesado_con_exito = True 
             
         # 3.5 Lógica por cada registro/niño encontrado en el correo
@@ -264,14 +264,23 @@ def ejecutar_asistente():
             tipo = datos_ia.get('tipo')
             nombre = datos_ia.get('nombre')
             asistencia = datos_ia.get('asistencia')
-            pregunta = datos_ia.get('pregunta')
+            comentario = datos_ia.get('comentario')
             evento = datos_ia.get('evento')
             
-            # SI HAY ERROR DE API, PARAMOS Y NO PONEMOS ETIQUETA
+            # FILTRO ANTI-NONE: Si el comentario dice "None" o está vacío, lo convertimos a null real
+            if comentario and str(comentario).strip().lower() in ['none', 'null', '']:
+                comentario = None
+                
+            # DEGRADACIÓN: Si era ASISTENCIA_Y_COMENTARIO pero el filtro borró el comentario, lo degradamos
+            if tipo == 'ASISTENCIA_Y_COMENTARIO' and not comentario:
+                tipo = 'SOLO_ASISTENCIA'
+            elif tipo == 'SOLO_COMENTARIO' and not comentario:
+                tipo = 'IRRELEVANTE'
+            
             if tipo == 'ERROR':
                 print(f"[AVISO] Error de la IA detectado. El correo se dejará sin etiquetar para reintentar luego.")
                 procesado_con_exito = False
-                break # Salimos del bucle de niños, ya sabemos que el correo falló
+                break 
             
             print(f"[DEBUG] Clasificación: {tipo} | Nombre: {nombre} | Evento: {evento}")
             
@@ -279,18 +288,18 @@ def ejecutar_asistente():
                 if apuntar_en_excel(hoja, nombre, evento, asistencia):
                     print(f"[EXITO] Asistencia '{asistencia}' registrada para '{nombre}'.")
                     
-            elif tipo == 'ASISTENCIA_Y_PREGUNTA':
+            elif tipo == 'ASISTENCIA_Y_COMENTARIO':
                 if apuntar_en_excel(hoja, nombre, evento, asistencia):
                     print(f"[EXITO] Asistencia registrada para '{nombre}'.")
                 
                 evt_texto = f" ({evento})" if evento else ""
-                mensaje_tg = f"🏕️ *Asistencia y Duda{evt_texto}*\nFamilia de {nombre}: Confirma que *{asistencia}* asiste.\n\n💬 Pregunta: _{pregunta}_"
+                mensaje_tg = f"🏕️ *Asistencia y Mensaje{evt_texto}*\nFamilia de {nombre}: Confirma que *{asistencia}* asiste.\n\n💬 Mensaje: _{comentario}_"
                 avisar_telegram(mensaje_tg)
                 print("[EXITO] Notificación enviada al Kraal.")
                 
-            elif tipo == 'SOLO_PREGUNTA':
+            elif tipo == 'SOLO_COMENTARIO':
                 evt_texto = f" ({evento})" if evento else ""
-                mensaje_tg = f"❓ *Duda Administrativa{evt_texto}*\nFamilia de {nombre} pregunta:\n\n💬 _{pregunta}_"
+                mensaje_tg = f"❓ *Mensaje/Duda Administrativa{evt_texto}*\nFamilia de {nombre} comenta:\n\n💬 _{comentario}_"
                 avisar_telegram(mensaje_tg)
                 print("[EXITO] Notificación de duda enviada.")
                 
