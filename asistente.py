@@ -1,166 +1,19 @@
+# asistente.py
 import os
-import json
-import base64
 import time
-import requests
 import gspread
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
-from dotenv import load_dotenv
 
-# --- 1. CARGA DE CONFIGURACION ---
-load_dotenv()
-GEMINI_API_KEYS = [
-    os.getenv("GEMINI_API_KEY_1"),
-    os.getenv("GEMINI_API_KEY_2"),
-    os.getenv("GEMINI_API_KEY_3"),
-    os.getenv("GEMINI_API_KEY_4"),
-    os.getenv("GEMINI_API_KEY_5"),
-    os.getenv("GEMINI_API_KEY_6"),
-    os.getenv("GEMINI_API_KEY_7"),
-    os.getenv("GEMINI_API_KEY_8")
-]
-GEMINI_API_KEYS = [k for k in GEMINI_API_KEYS if k] 
-
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-
-SCOPES = [
-    'https://www.googleapis.com/auth/spreadsheets', 
-    'https://www.googleapis.com/auth/drive',
-    'https://www.googleapis.com/auth/gmail.modify'
-]
-
-if not GEMINI_API_KEYS:
-    print("[ERROR] No se han encontrado API Keys en el archivo .env")
-    exit(1)
-
-# --- 2. FUNCIONES DE SERVICIO ---
-
-def avisar_telegram(mensaje):
-    """Envia notificaciones al grupo de TROPA AVISOS."""
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    datos = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": mensaje,
-        "parse_mode": "Markdown"
-    }
-    try:
-        requests.post(url, data=datos)
-    except Exception as e:
-        print(f"[ERROR] Fallo al contactar con la API de Telegram: {e}")
-
-def decodificar_correo(mensaje_gmail):
-    """Extrae el asunto y el cuerpo decodificado del correo."""
-    try:
-        payload = mensaje_gmail.get('payload', {})
-        cabeceras = payload.get('headers', [])
-        asunto = "Sin Asunto"
-        for cabecera in cabeceras:
-            if cabecera['name'].lower() == 'subject':
-                asunto = cabecera['value']
-                break
-                
-        partes = payload.get('parts', [])
-        cuerpo = ""
-        if not partes:
-            cuerpo = payload.get('body', {}).get('data', '')
-        else:
-            for parte in partes:
-                if parte['mimeType'] == 'text/plain':
-                    cuerpo = parte['body'].get('data', '')
-                    break
-        
-        texto_limpio = ""
-        if cuerpo:
-            texto_limpio = base64.urlsafe_b64decode(cuerpo).decode('utf-8')
-            
-        return f"ASUNTO: {asunto}\nCUERPO:\n{texto_limpio}"
-    except Exception as e:
-        print(f"[ERROR] Fallo al decodificar el correo: {e}")
-    return ""
-
-def analizar_correo_unico(texto_correo, nombres_validos, eventos_validos, active_keys):
-    """Llamada a Gemini para UN SOLO correo (Evita el Context Bleed)"""
-    prompt = f"""
-    Eres el secretario de la Tropa Waconda. Analiza SOLO este correo.
-    
-    REGLAS:
-    1. Lee el correo (ignora firmas o historiales).
-    2. Identifica a TODOS los niños mencionados. Para cada niño, devuelve un objeto en el array JSON.
-    3. Usa nombres de esta lista EXACTAMENTE: {nombres_validos}. (Ej: si dice "Clara y Julia", extrae a Clara Torrens y Julia Torrens por separado).
-    4. Identifica el evento basándote en el Asunto: {eventos_validos}.
-    5. Asistencia: "Sí" o "No".
-    6. Comentario: SOLO extrae dudas ("¿a qué hora?") o avisos ("llegará tarde"). Si es un saludo, hora oficial o vacío, pon null.
-
-    Ejemplo de respuesta:
-    [
-      {{"nombre": "Pablo Robledo", "evento": "Acampada", "asistencia": "Sí", "comentario_relevante": "¿Qué es el cuaderno?"}}
-    ]
-
-    CORREO:
-    {texto_correo}
-    """
-    
-    headers = {'Content-Type': 'application/json'}
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.1, "responseMimeType": "application/json"},
-        "safetySettings": [
-            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
-        ]
-    }
-
-    while active_keys:
-        llave_actual = active_keys[0]
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key={llave_actual}"
-        
-        for intento in range(3):
-            try:
-                response = requests.post(url, headers=headers, json=payload)
-
-                if response.status_code == 200:
-                    try:
-                        datos = response.json()
-                        if 'candidates' in datos and datos['candidates'] and 'content' in datos['candidates'][0]:
-                            texto = datos['candidates'][0]['content']['parts'][0]['text']
-                            return json.loads(texto)
-                        else:
-                            raise ValueError("Respuesta vacía por filtro de Google.")
-                    except Exception as e:
-                        time.sleep(2)
-                        continue 
-
-                elif response.status_code == 429:
-                    print(f"[ALERTA] Cuota (429). Rotando llave...")
-                    active_keys.pop(0)
-                    break 
-                    
-                elif response.status_code == 503:
-                    time.sleep(5)
-                    continue
-                else:
-                    time.sleep(5)
-                    continue 
-                    
-            except Exception as e:
-                time.sleep(5)
-                continue
-                
-        if active_keys:
-            llave_fallida = active_keys.pop(0)
-            active_keys.append(llave_fallida)
-
-    return [{"error_api": "CUOTA_AGOTADA"}]
+# Importamos nuestros propios módulos
+from config import SCOPES, GEMINI_API_KEYS
+from servicios import avisar_telegram, decodificar_correo
+from ia_motor import analizar_correo_unico
 
 def apuntar_en_excel(hoja, nombre_scout, evento, valor_asistencia):
-    if not nombre_scout or not evento:
-        return False
+    if not nombre_scout or not evento: return False
     try:
         celda_nombre = hoja.find(nombre_scout, in_column=1)
         celda_evento = hoja.find(evento, in_row=2)
@@ -184,8 +37,6 @@ def obtener_id_etiqueta(servicio_gmail, nombre_etiqueta="Procesado_IA"):
 
 def marcar_como_procesado(servicio_gmail, id_mensaje, id_etiqueta):
     servicio_gmail.users().messages().modify(userId='me', id=id_mensaje, body={'addLabelIds': [id_etiqueta]}).execute()
-
-# --- 3. ORQUESTADOR PRINCIPAL ---
 
 def ejecutar_asistente():
     print("[SISTEMA] Iniciando Agente de IA de asistencia y avisos de Tropa 194...")
@@ -244,10 +95,8 @@ def ejecutar_asistente():
             print("[CRÍTICO] Ejecución abortada por Cuota 429.")
             return
 
-        # --- LÓGICA REFINADA PYTHON (FILTROS ANTI-DUPLICADOS) ---
         procesado_con_exito = True
-        nombres_vistos = set() # Set matemático para bloquear clones (ej. "Pablo, Pablo")
-        
+        nombres_vistos = set() 
         nombres_para_telegram = []
         duda_para_telegram = None
         evento_para_telegram = None
@@ -263,49 +112,37 @@ def ejecutar_asistente():
             comentario = datos_ia.get('comentario_relevante')
             evento = datos_ia.get('evento')
             
-            # Filtro de clones
-            if nombre in nombres_vistos:
-                continue # Si ya hemos procesado a este niño en este correo, lo ignoramos
-            if nombre:
-                nombres_vistos.add(nombre)
+            if nombre in nombres_vistos: continue 
+            if nombre: nombres_vistos.add(nombre)
 
-            # Filtro anti-none
             if str(comentario).strip().lower() in ['none', 'null', '']:
                 comentario = None
                 
             print(f"[DEBUG] Extraído -> {nombre} | {evento} | {asistencia} | Duda: {bool(comentario)}")
             
-            # 1. Apuntar en Excel
             if nombre and asistencia:
                 if apuntar_en_excel(hoja, nombre, evento, asistencia):
                     print(f"  -> Sheets OK: {nombre}")
-                
-                # Guardamos para el resumen del Telegram
                 asist_texto = f" ({asistencia})"
                 nombres_para_telegram.append(f"{nombre}{asist_texto}")
             elif nombre:
                 nombres_para_telegram.append(f"{nombre} (Sin confirmar)")
             
-            # 2. Capturar la Duda (Nos quedamos solo con la primera duda válida del correo)
             if comentario and not duda_para_telegram:
                 duda_para_telegram = comentario
                 evento_para_telegram = evento
 
-        # 3. Enviar UN ÚNICO mensaje de Telegram por correo
         if procesado_con_exito and duda_para_telegram and nombres_para_telegram:
             nombres_str = ", ".join(nombres_para_telegram)
             evt_texto = f" ({evento_para_telegram})" if evento_para_telegram else ""
-            
             mensaje_tg = f"🏕️ *Aviso / Duda{evt_texto}*\nFamilia de {nombres_str}:\n\n💬 Mensaje: _{duda_para_telegram}_"
             avisar_telegram(mensaje_tg)
-            print("[EXITO] Telegram enviado (1 solo mensaje por familia).")
+            print("[EXITO] Telegram enviado.")
 
-        # 4. Etiquetar si no hubo errores de API
         if procesado_con_exito:
             marcar_como_procesado(gmail_service, correo_id, id_etiqueta_bot)
-            print("[INFO] Etiquetado con éxito en Gmail.")
+            print("[INFO] Etiquetado con éxito.")
 
-        # Pequeña pausa de seguridad antes del siguiente correo
         time.sleep(3)
 
     print("\n[SISTEMA] Ejecución finalizada correctamente. ¡Buena caza!")
