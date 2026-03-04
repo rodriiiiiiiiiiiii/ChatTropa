@@ -18,7 +18,12 @@ def analizar_correo_unico(texto_correo, nombres_validos, eventos_validos, active
        - REGLA HERMANAS: Si el correo dice "Clara y Julia", debes crear DOS registros distintos: "Clara Torrens" y "Julia Torrens".
     4. Identifica el evento basándote en el Asunto: {eventos_validos}.
     5. Asistencia: "Sí" o "No".
-    6. Comentario: SOLO extrae dudas ("¿a qué hora?") o solicitudes ("podeis decirme la hora"). Si es un saludo, hora oficial, aviso o vacío, pon null.
+    6. Comentario: SOLO extrae dudas ("¿a qué hora?") o solicitudes ("podeis decirme la hora"). Si es:
+        - Un saludo pon null.
+        - Un aviso pon null.
+        - Una especificación de a que hora viene pon null.
+        - Una justificacion de porque no viene pon null.
+        - Nada pon null.
 
     Ejemplo de respuesta:
     [
