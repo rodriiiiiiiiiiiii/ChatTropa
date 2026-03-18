@@ -10,35 +10,27 @@ from config import SCOPES, GEMINI_API_KEYS
 from servicios import avisar_telegram, decodificar_correo
 from ia_motor import analizar_correo_unico
 
-def apuntar_en_excel(hoja, nombre_scout, evento, valor_asistencia):
-    if not nombre_scout or not evento: return False
+def apuntar_en_excel(hoja, nombre_scout, evento, valor_asistencia, nombres_validos, eventos_validos):
     try:
-        celda_nombre = hoja.find(nombre_scout, in_column=1)
-        celda_evento = hoja.find(evento, in_row=2)
-        if celda_nombre and celda_evento:
-            hoja.update_cell(celda_nombre.row, celda_evento.col, valor_asistencia)
-            return True
-        return False
-    except Exception:
+        fila = nombres_validos.index(nombre_scout) + 3
+        columna = eventos_validos.index(evento) + 2
+        hoja.update_cell(fila, columna, valor_asistencia)
+        return True
+    except ValueError:
         return False
 
 def obtener_id_etiqueta(servicio_gmail, nombre_etiqueta):
-    resultados = servicio_gmail.users().labels().list(userId='me').execute()
-    etiquetas = resultados.get('labels', [])
+    etiquetas = servicio_gmail.users().labels().list(userId='me').execute().get('labels', [])
     for etiqueta in etiquetas:
         if etiqueta['name'].lower() == nombre_etiqueta.lower():
             return etiqueta['id']
-            
     nueva_etiqueta = {'name': nombre_etiqueta, 'labelListVisibility': 'labelShow', 'messageListVisibility': 'show'}
-    etiqueta_creada = servicio_gmail.users().labels().create(userId='me', body=nueva_etiqueta).execute()
-    return etiqueta_creada['id']
+    return servicio_gmail.users().labels().create(userId='me', body=nueva_etiqueta).execute()['id']
 
 def marcar_como_procesado(servicio_gmail, id_mensaje, id_etiqueta):
     servicio_gmail.users().messages().modify(userId='me', id=id_mensaje, body={'addLabelIds': [id_etiqueta]}).execute()
 
 def ejecutar_asistente():
-    print("[SISTEMA] Iniciando Agente de IA de asistencia y avisos de Tropa 194...")
-    
     creds = None
     if os.path.exists('token.json'):
         creds = Credentials.from_authorized_user_file('token.json', SCOPES)
@@ -52,122 +44,110 @@ def ejecutar_asistente():
             token.write(creds.to_json())
     
     gc = gspread.authorize(creds)
-    hoja = gc.open("Asistencia_pruebas_IA").worksheet("ASISTENCIA")
+    libro = gc.open("Asistencia_pruebas_IA")
+    hoja = libro.worksheet("ASISTENCIA")
     gmail_service = build('gmail', 'v1', credentials=creds)
     
-    print("[SISTEMA] Descargando listas oficiales desde Sheets...")
     nombres_validos = [n for n in hoja.col_values(1)[2:] if n.strip()] 
     eventos_validos = [e for e in hoja.row_values(2)[1:] if e.strip()]
 
-    id_etiqueta_bot = obtener_id_etiqueta(gmail_service, "Procesado_IA")
-    id_etiqueta_revision = obtener_id_etiqueta(gmail_service, "Revision_Manual")
+    try:
+        hoja_correos = libro.worksheet("CORREOS")
+        datos_correos = hoja_correos.get_all_values()
+    except Exception:
+        datos_correos = []
+        
+    mapa_correos_padres = {}
+    for fila in datos_correos:
+        if not fila or len(fila) < 2: continue
+        nombre_scout = fila[0].strip()
+        for email in fila[1:]:
+            if email.strip():
+                mapa_correos_padres[email.strip().lower()] = nombre_scout
+
+    id_etiq_bot = obtener_id_etiqueta(gmail_service, "Procesado_IA")
+    id_etiq_rev = obtener_id_etiqueta(gmail_service, "Revision_Manual")
 
     query = 'in:inbox -label:Procesado_IA -label:Revision_Manual newer_than:15d -from:me'
-    resultados = gmail_service.users().messages().list(userId='me', q=query).execute()
-    mensajes = resultados.get('messages', [])
+    mensajes = gmail_service.users().messages().list(userId='me', q=query).execute().get('messages', [])
     
-    if not mensajes:
-        print("[INFO] No existen correos nuevos.")
-        return
-
+    if not mensajes: return
     mensajes.reverse()
-    total_mensajes = len(mensajes)
-    print(f"[INFO] Se procesarán {total_mensajes} correos INDIVIDUALMENTE.")
 
     active_keys = GEMINI_API_KEYS.copy()
     buffer_mensajes = [] 
 
-    for i, msg in enumerate(mensajes, start=1):
+    for msg in mensajes:
         correo_id = msg['id']
-        print(f"\n[INFO] Leyendo Correo {i}/{total_mensajes} (ID: {correo_id})")
-        
         msg_completo = gmail_service.users().messages().get(userId='me', id=correo_id, format='full').execute()
-        texto_correo = decodificar_correo(msg_completo)
-
-        datos_ia_lista = analizar_correo_unico(texto_correo, nombres_validos, eventos_validos, active_keys)
+        datos_correo = decodificar_correo(msg_completo)
         
-        if isinstance(datos_ia_lista, dict):
-            datos_ia_lista = [datos_ia_lista]
+        if not datos_correo: continue
+
+        texto_total_lower = f"{datos_correo['asunto']} {datos_correo['cuerpo']}".lower()
+        evento_local = next((e for e in eventos_validos if e.lower() in datos_correo['asunto'].lower()), None)
+        
+        remitente_lower = datos_correo['remitente'].lower()
+        nombre_por_correo = next((nombre for correo, nombre in mapa_correos_padres.items() if correo in remitente_lower), None)
+        
+        if nombre_por_correo:
+            nombres_para_ia = [nombre_por_correo]
+        else:
+            posibles_nombres = [n for n in nombres_validos if n.split()[0].lower() in texto_total_lower]
+            nombres_para_ia = posibles_nombres if posibles_nombres else nombres_validos
+
+        datos_ia_lista = analizar_correo_unico(datos_correo['raw'], nombres_para_ia, eventos_validos, evento_local, active_keys)
+        if isinstance(datos_ia_lista, dict): datos_ia_lista = [datos_ia_lista]
             
         if any(d.get('error_api') == "CUOTA_AGOTADA" for d in datos_ia_lista):
-            aviso_fatal = "⚠️ *Alerta*\nTodas las API Keys agotadas. Se pausa hasta mañana."
-            if aviso_fatal not in buffer_mensajes:
-                avisar_telegram(aviso_fatal)
-            print("[CRÍTICO] Ejecución abortada por Cuota 429.")
+            if "⚠️ *Alerta*" not in buffer_mensajes: avisar_telegram("⚠️ *Alerta*\nTodas las API Keys agotadas.")
             return
 
         procesado_con_exito = True
         nombres_vistos = set() 
-        nombres_para_telegram = []
-        duda_para_telegram = None
-        evento_para_telegram = None
+        nombres_tg, duda_tg, evento_tg = [], None, None
         
         for datos_ia in datos_ia_lista:
             if datos_ia.get('error_api'):
-                print(f"[AVISO] Error interno en este correo. Se saltará la etiqueta.")
                 procesado_con_exito = False
                 break 
 
             nombre = datos_ia.get('nombre')
             asistencia = datos_ia.get('asistencia')
             comentario = datos_ia.get('comentario_relevante')
-            evento = datos_ia.get('evento')
+            evento = datos_ia.get('evento') or evento_local
             
             if nombre in nombres_vistos: continue 
             if nombre: nombres_vistos.add(nombre)
-
-            if str(comentario).strip().lower() in ['none', 'null', '']:
-                comentario = None
-                
-            print(f"[DEBUG] Extraído -> {nombre} | {evento} | {asistencia} | Duda: {bool(comentario)}")
+            if str(comentario).strip().lower() in ['none', 'null', '']: comentario = None
             
             if nombre and asistencia:
-                if apuntar_en_excel(hoja, nombre, evento, asistencia):
-                    print(f"  -> Sheets OK: {nombre}")
-                asist_texto = f" ({asistencia})"
-                nombres_para_telegram.append(f"{nombre}{asist_texto}")
+                apuntar_en_excel(hoja, nombre, evento, asistencia, nombres_validos, eventos_validos)
+                nombres_tg.append(f"{nombre} ({asistencia})")
             elif nombre:
-                nombres_para_telegram.append(f"{nombre} (Sin confirmar)")
+                nombres_tg.append(f"{nombre} (Sin confirmar)")
             
-            if comentario and not duda_para_telegram:
-                duda_para_telegram = comentario
-                evento_para_telegram = evento
+            if comentario and not duda_tg:
+                duda_tg, evento_tg = comentario, evento
 
         if procesado_con_exito:
-            if nombres_para_telegram or duda_para_telegram:
-                if duda_para_telegram and nombres_para_telegram:
-                    nombres_str = ", ".join(nombres_para_telegram)
-                    evt_texto = f" ({evento_para_telegram})" if evento_para_telegram else ""
-                    mensaje_tg = f"🏕️ *Aviso / Duda{evt_texto}*\nFamilia de {nombres_str}:\n\n💬 Mensaje: _{duda_para_telegram}_"
-                    
+            if nombres_tg or duda_tg:
+                if duda_tg and nombres_tg:
+                    evt_texto = f" ({evento_tg})" if evento_tg else ""
+                    mensaje_tg = f"🏕️ *Aviso / Duda{evt_texto}*\nFamilia de {', '.join(nombres_tg)}:\n\n💬 Mensaje: _{duda_tg}_"
                     if mensaje_tg not in buffer_mensajes:
                         avisar_telegram(mensaje_tg)
-                        print("[EXITO] Telegram enviado.")
                         buffer_mensajes.append(mensaje_tg)
-                        if len(buffer_mensajes) > 10:
-                            buffer_mensajes.pop(0) 
-                    else:
-                        print("[INFO] Mensaje duplicado omitido por el buffer.")
-                        
-                marcar_como_procesado(gmail_service, correo_id, id_etiqueta_bot)
-                print("[INFO] Etiquetado con éxito.")
+                        if len(buffer_mensajes) > 10: buffer_mensajes.pop(0) 
+                marcar_como_procesado(gmail_service, correo_id, id_etiq_bot)
             else:
-                lineas_correo = texto_correo.split('\n')
-                asunto_aislado = lineas_correo[0].replace('ASUNTO: ', '') if lineas_correo else "Desconocido"
-                mensaje_tg = f"⚠️ *Correo Ignorado*\nSe ha clasificado como irrelevante.\n\n📧 *Asunto:* {asunto_aislado}\n\n👉 Revisa tu Gmail. Añade 'Procesado_IA' si es basura."
-                
+                mensaje_tg = f"⚠️ *Correo Ignorado*\n📧 *Asunto:* {datos_correo['asunto']}\n👉 Revisa Gmail."
                 if mensaje_tg not in buffer_mensajes:
                     avisar_telegram(mensaje_tg)
                     buffer_mensajes.append(mensaje_tg)
-                    if len(buffer_mensajes) > 10:
-                        buffer_mensajes.pop(0)
-                        
-                marcar_como_procesado(gmail_service, correo_id, id_etiqueta_revision)
-                print("[AVISO] Correo marcado como 'Revision_Manual'.")
-
+                    if len(buffer_mensajes) > 10: buffer_mensajes.pop(0)
+                marcar_como_procesado(gmail_service, correo_id, id_etiq_rev)
         time.sleep(3)
-
-    print("\n[SISTEMA] Ejecución finalizada correctamente. ¡Buena caza!")
 
 if __name__ == '__main__':
     ejecutar_asistente()

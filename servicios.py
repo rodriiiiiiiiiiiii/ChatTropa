@@ -1,68 +1,45 @@
-# servicios.py
 import base64
 import requests
 import re
 from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 
 def avisar_telegram(mensaje):
-    """Envia notificaciones al grupo de Kraal definido en config."""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    datos = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": mensaje,
-        "parse_mode": "Markdown"
-    }
+    datos = {"chat_id": TELEGRAM_CHAT_ID, "text": mensaje, "parse_mode": "Markdown"}
     try:
         requests.post(url, data=datos)
-    except Exception as e:
-        print(f"[ERROR] Fallo al contactar con la API de Telegram: {e}")
+    except Exception:
+        pass
 
 def limpiar_texto_correo(texto_sucio):
-    """Detecta historiales de Gmail, Outlook y firmas, y le corta la cola al mensaje."""
-    if not texto_sucio:
-        return ""
-        
-    # Patrones clásicos donde empieza la "basura" de respuestas o firmas móviles
+    if not texto_sucio: return ""
     patrones_corte = [
-        r"Enviado desde",                         # Firmas de Outlook/iPhone
-        r"El\s+\d{1,2}.*?escribió:",              # Historial clásico de Gmail (Ej: El 26 feb 2026... escribió:)
-        r"De:\s+Tropa Waconda",                   # Historial de Outlook/Hotmail
-        r"On\s+.*?wrote:",                        # Historiales en inglés
-        r"_{10,}"                                 # Líneas largas (_________________) que separan correos
+        r"Enviado desde", r"El\s+\d{1,2}.*?escribió:", 
+        r"De:\s+Tropa Waconda", r"On\s+.*?wrote:", r"_{10,}"
     ]
-    
     texto_limpio = texto_sucio
     for patron in patrones_corte:
-        partes = re.split(patron, texto_limpio, maxsplit=1, flags=re.IGNORECASE)
-        texto_limpio = partes[0]
-
+        texto_limpio = re.split(patron, texto_limpio, maxsplit=1, flags=re.IGNORECASE)[0]
     return texto_limpio.strip()
 
 def decodificar_correo(mensaje_gmail):
-    """Extrae el asunto y el cuerpo decodificado de un payload de Gmail."""
     try:
         payload = mensaje_gmail.get('payload', {})
-        
-        # Extraer Asunto
         cabeceras = payload.get('headers', [])
-        asunto = next((cab['value'] for cab in cabeceras if cab['name'].lower() == 'subject'), "Sin Asunto")
+        asunto = next((c['value'] for c in cabeceras if c['name'].lower() == 'subject'), "Sin Asunto")
+        remitente = next((c['value'] for c in cabeceras if c['name'].lower() == 'from'), "Desconocido")
                 
-        # Extraer Cuerpo
         partes = payload.get('parts', [])
-        cuerpo = ""
-        if not partes:
-            cuerpo = payload.get('body', {}).get('data', '')
-        else:
-            for parte in partes:
-                if parte['mimeType'] == 'text/plain':
-                    cuerpo = parte['body'].get('data', '')
-                    break
+        cuerpo = payload.get('body', {}).get('data', '') if not partes else next((p['body'].get('data', '') for p in partes if p['mimeType'] == 'text/plain'), "")
         
         texto_crudo = base64.urlsafe_b64decode(cuerpo).decode('utf-8') if cuerpo else ""
-
         texto_limpio = limpiar_texto_correo(texto_crudo)
             
-        return f"ASUNTO: {asunto}\nCUERPO:\n{texto_limpio}"
-    except Exception as e:
-        print(f"[ERROR] Fallo al decodificar el correo: {e}")
-        return ""
+        return {
+            "asunto": asunto,
+            "remitente": remitente,
+            "cuerpo": texto_limpio,
+            "raw": f"REMITENTE: {remitente}\nASUNTO: {asunto}\nCUERPO:\n{texto_limpio}"
+        }
+    except Exception:
+        return None
