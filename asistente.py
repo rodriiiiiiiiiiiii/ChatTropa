@@ -1,5 +1,6 @@
 import os
 import time
+from collections import defaultdict
 import gspread
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -57,13 +58,13 @@ def ejecutar_asistente():
     except Exception:
         datos_correos = []
         
-    mapa_correos_padres = {}
+    mapa_correos_padres = defaultdict(list)
     for fila in datos_correos:
         if not fila or len(fila) < 2: continue
         nombre_scout = fila[0].strip()
         for email in fila[1:]:
             if email.strip():
-                mapa_correos_padres[email.strip().lower()] = nombre_scout
+                mapa_correos_padres[email.strip().lower()].append(nombre_scout)
 
     id_etiq_bot = obtener_id_etiqueta(gmail_service, "Procesado_IA")
     id_etiq_rev = obtener_id_etiqueta(gmail_service, "Revision_Manual")
@@ -88,10 +89,10 @@ def ejecutar_asistente():
         evento_local = next((e for e in eventos_validos if e.lower() in datos_correo['asunto'].lower()), None)
         
         remitente_lower = datos_correo['remitente'].lower()
-        nombre_por_correo = next((nombre for correo, nombre in mapa_correos_padres.items() if correo in remitente_lower), None)
+        nombres_por_correo = next((nombres for correo, nombres in mapa_correos_padres.items() if correo in remitente_lower), None)
         
-        if nombre_por_correo:
-            nombres_para_ia = [nombre_por_correo]
+        if nombres_por_correo:
+            nombres_para_ia = nombres_por_correo
         else:
             posibles_nombres = [n for n in nombres_validos if n.split()[0].lower() in texto_total_lower]
             nombres_para_ia = posibles_nombres if posibles_nombres else nombres_validos

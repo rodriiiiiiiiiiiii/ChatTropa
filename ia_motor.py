@@ -15,7 +15,6 @@ def analizar_correo_unico(texto_correo, nombres_validos, eventos_validos, active
        - Empareja al niño mencionado con su nombre en esta lista oficial: {nombres_validos}.
        - Escribe el nombre en el JSON EXACTAMENTE como sale en la lista.
        - IGNORA por completo los nombres de los padres o las firmas del correo (ej: si firma "Paloma" o "Sonsoles", descártalo).
-       - REGLA HERMANAS: Si el correo dice "Clara y Julia", debes crear DOS registros distintos: "Clara Torrens" y "Julia Torrens".
     4. Identifica el evento basándote en el Asunto: {eventos_validos}.
     5. Asistencia: "Sí" o "No".
     6. Comentario: SOLO extrae dudas ("¿a qué hora?") o solicitudes ("podeis decirme la hora"). Si es:
