@@ -9,81 +9,96 @@
 
 ## 🚀 Características Principales
 
-* **Procesamiento de Lenguaje Natural (NLP):** Integración mediante peticiones HTTP REST a la API de **Google Gemini** (`gemini-flash-lite`) para clasificar correos en 4 casos de uso (Solo Asistencia, Asistencia + Pregunta, Solo Pregunta, Irrelevante).
-* **RAG Básico (Inyección de Contexto):** Descarga en tiempo real los nombres de los scouts y los eventos planificados desde Google Sheets y los inyecta en el *prompt* del modelo. Esto fuerza coincidencias exactas y elimina el riesgo de alucinaciones por parte de la IA.
-* **Control de Concurrencia (Race Conditions):** Sistema de etiquetado dinámico en Gmail (`Procesado_IA`). Evita que el agente lea correos duplicados o procese hilos ya leídos por operadores humanos, asegurando la integridad del estado.
-* **Filtro de Ruido Saliente:** La consulta a la API de Gmail (`in:inbox -label:Procesado_IA newer_than:15d -from:me`) ignora automáticamente las respuestas enviadas por el propio equipo de gestión.
-* **Ordenación Cronológica de Estados:** Los correos se leen en reverso cronológico (del más antiguo al más nuevo). Si un usuario cambia de opinión en correos sucesivos (ej. de "Sí asiste" a "No asiste"), la base de datos reflejará siempre el estado más reciente.
-* **Tolerancia a Fallos y Rate Limiting:** Implementación de un patrón de *Retry/Backoff* (reintentos automáticos) para sobrevivir a caídas del servidor (Error 503) o superación de cuotas (Error 429) de la API gratuita de Google.
-* **Alertas Push Automatizadas:** Conexión con la API de Telegram para derivar únicamente las dudas administrativas no triviales al Kraal (equipo de monitores), filtrando el ruido de las confirmaciones simples.
+  * **Pre-filtrado Algorítmico y Mapeo Dinámico (Zero-Hallucination):** Antes de invocar a la IA, el sistema cruza el remitente del correo con una base de datos de correos de padres (`CORREOS`). Esto resuelve colisiones de nombres idénticos, reduce drásticamente el uso de tokens y elimina las alucinaciones de la IA al entregarle un contexto cerrado de un solo individuo.
+  * **Procesamiento de Lenguaje Natural (NLP):** Integración mediante peticiones HTTP REST a la API de **Google Gemini** (`gemini-flash-lite`) para extraer la asistencia (Sí/No/Null) y aislar únicamente dudas reales o comentarios relevantes, ignorando el ruido habitual (saludos, firmas).
+  * **Limpieza de Datos con Regex:** Expresiones regulares en Python que cortan automáticamente historiales de respuestas de Gmail, Outlook y firmas de dispositivos móviles antes de enviar el prompt al LLM.
+  * **Rotación de API Keys y Backoff (Rate Limiting):** Implementación de un pool de hasta 8 API Keys de Gemini con rotación automática y *Backoff* (reintentos espaciados) para absorber bloqueos temporales (503) y agotar cuotas (429) de la capa gratuita, asegurando alta disponibilidad.
+  * **Control de Concurrencia y Cuarentena:** Sistema de etiquetado dinámico en Gmail (`Procesado_IA`). Si la IA detecta un correo ambiguo o irrelevante, no lo descarta permanentemente, sino que lo envía a cuarentena (`Revision_Manual`) para aplicar un patrón *Human-in-the-Loop*.
+  * **Despliegue Serverless (CI/CD):** Ejecución 100% automatizada en la nube mediante **GitHub Actions** (Cron Jobs), con gestión de credenciales OAuth de Google inyectadas en tiempo de ejecución mediante decodificación Base64 en un entorno *headless*.
+  * **Alertas Push Automatizadas:** Conexión con la API de Telegram para derivar únicamente las dudas administrativas al Kraal (equipo de monitores), con un buffer anti-spam para evitar alertas duplicadas.
 
+## 🏗️ Arquitectura del Sistema (Modular)
 
+El proyecto sigue una arquitectura separada en 4 módulos principales para facilitar su escalabilidad:
 
-## 🏗️ Arquitectura del Sistema
+1.  `config.py`: Ingestión de variables de entorno y definición de *scopes*.
+2.  `servicios.py`: Lógica de interacción con APIs externas (Telegram) y limpieza pura de texto (Regex, Base64 Decode).
+3.  `ia_motor.py`: Aislamiento del *prompt engineering*, apagado de filtros de seguridad restrictivos y gestión de peticiones REST al LLM con rotación de llaves.
+4.  `asistente.py`: *Core* del negocio, orquestación de Google Sheets/Gmail y enrutamiento lógico.
 
-El flujo de ejecución del script sigue un *pipeline* secuencial y robusto:
+**Flujo de ejecución:**
 
-1. **Autenticación OAuth 2.0:** Validación segura de credenciales para acceder a Google Workspace (Gmail, Drive, Sheets).
-2. **Extracción de Dominio (Fetch):** Recuperación de las dimensiones válidas (Scouts y Eventos) desde la hoja de cálculo.
-3. **Ingesta de Datos:** Búsqueda en Gmail de correos no procesados en los últimos 15 días. Extracción y decodificación en Base64 de las cabeceras (Asunto) y el cuerpo del mensaje.
-4. **Inferencia (AI Agent):** Petición directa a la API de Gemini instruyendo una respuesta estricta en formato JSON.
-5. **Enrutamiento (Lógica de Negocio):**
-   * Actualización bidimensional (Fila=Scout, Columna=Evento) en Google Sheets vía `gspread`.
-   * Disparo de *webhooks* a Telegram.
-6. **Mutación de Estado:** Etiquetado del correo original en Gmail como completado.
+1.  **Autenticación OAuth 2.0:** Validación segura de credenciales.
+2.  **Extracción de Dimensiones:** Recuperación de Scouts, Eventos y mapa de Correos desde Google Sheets.
+3.  **Ingesta y Limpieza:** Búsqueda en Gmail, decodificación y Regex.
+4.  **Cruce Local:** Emparejamiento del `remitente` del email con la hoja de Sheets.
+5.  **Inferencia (IA):** Petición aislada (1 correo = 1 request) a Gemini en `JSON Mode`.
+6.  **Mutación de Estado:** Actualización en Sheets, Webhooks a Telegram y etiquetado en Gmail.
 
 ## 🛠️ Stack Tecnológico
 
-* **Lenguaje:** Python 3.11+
-* **Integraciones Core:** `google-api-python-client`, `google-auth-oauthlib`, `gspread`.
-* **Motor IA:** Google Gemini REST API.
-* **Notificaciones:** API de Telegram (mediante `requests`).
-* **Seguridad:** Gestión de secretos locales con `python-dotenv`.
+  * **Lenguaje:** Python 3.11+
+  * **Integraciones Core:** `google-api-python-client`, `google-auth-oauthlib`, `gspread`.
+  * **Motor IA:** Google Gemini REST API.
+  * **Notificaciones:** API de Telegram (mediante `requests`).
+  * **Infraestructura:** GitHub Actions (Ubuntu runner).
 
 ## ⚙️ Requisitos Previos
 
-1. Python 3.11 o superior instalado en el sistema.
-2. Un proyecto en **Google Cloud Console** con las siguientes APIs habilitadas:
-   * Google Drive API
-   * Google Sheets API
-   * Gmail API
-3. Un archivo `credentials.json` generado mediante credenciales OAuth 2.0 (Desktop App) descargado en la raíz del proyecto.
-4. Una API Key de **Google AI Studio** (Gemini).
-5. Un bot de Telegram creado a través de *BotFather* y el ID del chat de destino.
+1.  Python 3.11 o superior instalado.
+2.  Un proyecto en **Google Cloud Console** (En modo "Producción") con las APIs habilitadas: Drive API, Sheets API, Gmail API.
+3.  Un archivo `credentials.json` generado mediante credenciales OAuth 2.0 (Desktop App).
+4.  Entre 1 y 8 API Keys de **Google AI Studio** (Gemini).
+5.  Un bot de Telegram creado a través de *BotFather* y el ID del chat de destino.
+6.  Un Google Sheets con dos pestañas:
+      * `ASISTENCIA`: Columna A (Nombres), Fila 2 (Eventos).
+      * `CORREOS`: Columna A (Nombre exacto), Columna B en adelante (Correos de los tutores).
 
-## 🚀 Instalación y Despliegue
+## 🚀 Instalación (Entorno Local)
 
 **1. Clonar el repositorio:**
+
 ```bash
-git clone [https://github.com/rodriiiiiiiiiii/ChatTropa.git](https://github.com/rodriiiiiiiiiii/ChatTropa.git)
+git clone https://github.com/rodriiiiiiiiiii/ChatTropa.git
 cd ChatTropa
 ```
 
 **2. Instalar dependencias:**
-Se recomienda el uso de un entorno virtual (venv).
 
 ```bash
 pip install -r requirements.txt
-
 ```
 
 **3. Configurar variables de entorno:**
-Crea un archivo `.env` en el directorio raíz del proyecto con la siguiente estructura (no utilices comillas):
+Crea un archivo `.env` en el directorio raíz del proyecto:
 
 ```env
-GEMINI_API_KEY=tu_api_key_de_gemini
+GEMINI_API_KEY_1=tu_api_key_1
+GEMINI_API_KEY_2=tu_api_key_2
+# ... hasta GEMINI_API_KEY_8
 TELEGRAM_BOT_TOKEN=tu_token_del_bot_de_telegram
 TELEGRAM_CHAT_ID=tu_id_de_chat_o_grupo
-
 ```
 
-**4. Ejecución:**
+**4. Autenticación Inicial y Ejecución:**
+Al ejecutar por primera vez, se abrirá el navegador para autorizar la app y generar el archivo `token.json`.
 
 ```bash
 python asistente.py
-
 ```
 
+## ☁️ Despliegue en GitHub Actions
+
+Para que el bot se ejecute de manera autónoma en la nube todos los días:
+
+1.  Convierte tus archivos `credentials.json` y `token.json` a Base64.
+2.  En tu repositorio de GitHub, ve a **Settings \> Secrets and variables \> Actions**.
+3.  Añade los siguientes *Repository Secrets*:
+      * `GOOGLE_CREDENTIALS_B64`: Contenido de tu credentials.json en Base64.
+      * `GOOGLE_TOKEN_B64`: Contenido de tu token.json en Base64.
+      * `GEMINI_API_KEY_1` al `8`: Tus claves de Gemini.
+      * `TELEGRAM_BOT_TOKEN` y `TELEGRAM_CHAT_ID`.
+4.  El workflow `.github/workflows/ejecucion_diaria.yaml` reconstruirá los tokens en el servidor virtual y ejecutará el pipeline automáticamente según el *cron* configurado.
 
 ## 👨‍💻 Autor
 
