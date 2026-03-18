@@ -2,13 +2,13 @@ name: Agente IA Tropa 194
 
 on:
   schedule:
-    # Se ejecuta todos los días a las 19:00 UTC (20:00 hora peninsular española en invierno / 21:00 en verano)
+    # Se ejecuta todos los días a las 19:00 UTC (20:00 hora peninsular española)
     - cron: '0 19 * * *'
-  workflow_dispatch: # Este comando mágico añade un botón en GitHub para ejecutarlo a mano cuando quieras
+  workflow_dispatch: # Botón mágico para ejecutarlo a mano
 
 jobs:
   ejecutar-bot:
-    runs-on: ubuntu-latest # Usamos un servidor Linux gratuito de GitHub
+    runs-on: ubuntu-latest
 
     steps:
     - name: 📥 Clonar el repositorio
@@ -25,11 +25,12 @@ jobs:
 
     - name: 🔐 Generar archivos de credenciales de Google
       env:
-        GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
-        GOOGLE_TOKEN: ${{ secrets.GOOGLE_TOKEN }}
+        GOOGLE_CREDENTIALS_B64: ${{ secrets.GOOGLE_CREDENTIALS_B64 }}
+        GOOGLE_TOKEN_B64: ${{ secrets.GOOGLE_TOKEN_B64 }}
       run: |
-        echo "$GOOGLE_CREDENTIALS" > credentials.json
-        echo "$GOOGLE_TOKEN" > token.json
+        # Desciframos el texto en Base64 para reconstruir los JSON originales intactos
+        echo "$GOOGLE_CREDENTIALS_B64" | base64 --decode > credentials.json
+        echo "$GOOGLE_TOKEN_B64" | base64 --decode > token.json
 
     - name: 🚀 Ejecutar el Asistente IA
       env:
@@ -38,6 +39,9 @@ jobs:
         GEMINI_API_KEY_3: ${{ secrets.GEMINI_API_KEY_3 }}
         GEMINI_API_KEY_4: ${{ secrets.GEMINI_API_KEY_4 }}
         GEMINI_API_KEY_5: ${{ secrets.GEMINI_API_KEY_5 }}
+        GEMINI_API_KEY_6: ${{ secrets.GEMINI_API_KEY_6 }}
+        GEMINI_API_KEY_7: ${{ secrets.GEMINI_API_KEY_7 }}
+        GEMINI_API_KEY_8: ${{ secrets.GEMINI_API_KEY_8 }}
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       run: |
