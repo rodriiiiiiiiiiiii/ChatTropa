@@ -45,7 +45,19 @@ def ejecutar_asistente():
             token.write(creds.to_json())
     
     gc = gspread.authorize(creds)
-    libro = gc.open("Asistencia_pruebas_IA")
+    libro = None
+    for intento in range(3):
+        try:
+            libro = gc.open("Asistencia_pruebas_IA")
+            break
+        except Exception as e:
+            print(f"[AVISO] Fallo al conectar con Sheets. Reintentando ({intento+1}/3)...")
+            time.sleep(5)
+            
+    if not libro:
+        print("[ERROR CRÍTICO] Google Sheets no responde hoy. Abortando ejecución.")
+        return
+        
     hoja = libro.worksheet("ASISTENCIA")
     gmail_service = build('gmail', 'v1', credentials=creds)
     
@@ -69,7 +81,7 @@ def ejecutar_asistente():
     id_etiq_bot = obtener_id_etiqueta(gmail_service, "Procesado_IA")
     id_etiq_rev = obtener_id_etiqueta(gmail_service, "Revision_Manual")
 
-    query = 'in:inbox -label:Procesado_IA -label:Revision_Manual newer_than:15d -from:me'
+    query = 'in:inbox newer_than:15d -from:me'
     mensajes = gmail_service.users().messages().list(userId='me', q=query).execute().get('messages', [])
     
     if not mensajes: return
@@ -81,6 +93,11 @@ def ejecutar_asistente():
     for msg in mensajes:
         correo_id = msg['id']
         msg_completo = gmail_service.users().messages().get(userId='me', id=correo_id, format='full').execute()
+
+        etiquetas_mensaje = msg_completo.get('labelIds', [])
+        if id_etiq_bot in etiquetas_mensaje or id_etiq_rev in etiquetas_mensaje:
+            continue # Si este mensaje concreto ya fue procesado, pasamos al siguiente
+            
         datos_correo = decodificar_correo(msg_completo)
         
         if not datos_correo: continue
