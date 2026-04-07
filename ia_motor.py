@@ -1,10 +1,12 @@
-# ia_motor.py
 import json
 import time
 import requests
 
-def analizar_correo_unico(texto_correo, nombres_validos, eventos_validos, active_keys):
+def analizar_correo_unico(texto_correo, nombres_validos, eventos_validos, evento_detectado, active_keys):
     """Llamada a Gemini para UN SOLO correo."""
+    
+    instruccion_evento = f'El evento es EXACTAMENTE "{evento_detectado}".' if evento_detectado else f'Selecciona UN evento de esta lista: {eventos_validos}.'
+    
     prompt = f"""
     Eres el secretario de la Tropa Waconda. Analiza SOLO este correo.
     
@@ -12,17 +14,12 @@ def analizar_correo_unico(texto_correo, nombres_validos, eventos_validos, active
     1. Lee el correo (ignora firmas o historiales).
     2. Identifica ÚNICAMENTE a los niños que se mencionen de forma explícita en el texto del correo. ¡TIENES TERMINANTEMENTE PROHIBIDO INVENTAR NOMBRES O EXTRAERLOS DE LA LISTA DE VALIDACIÓN SI NO APARECEN EN EL CORREO!
     3. NOMBRES EXACTOS (IMPORTANTE): 
-       - Empareja al niño mencionado con su nombre en esta lista oficial: {nombres_validos}.
-       - Escribe el nombre en el JSON EXACTAMENTE como sale en la lista.
-       - IGNORA por completo los nombres de los padres o las firmas del correo (ej: si firma "Paloma" o "Sonsoles", descártalo).
-    4. Identifica el evento basándote en el Asunto: {eventos_validos}.
-    5. Asistencia: "Sí" o "No".
-    6. Comentario: SOLO extrae dudas ("¿a qué hora?") o solicitudes ("podeis decirme la hora"). Si es:
-        - Un saludo pon null.
-        - Un aviso pon null.
-        - Una especificación de a que hora viene pon null.
-        - Una justificacion de porque no viene pon null.
-        - Nada pon null.
+       - Identifica la asistencia buscando ÚNICAMENTE entre estos nombres permitidos: {nombres_validos}.
+       - Escribe el nombre en el JSON EXACTAMENTE como sale en esa lista. Si el correo menciona a varios de esos nombres o habla en plural (ej: "vamos", "mis hijas"), crea un registro para CADA UNO de ellos.
+       - IGNORA por completo los nombres de los padres o las firmas del correo.
+    4. EVENTO: {instruccion_evento}
+    5. Asistencia: "Sí" o "No". Si no mencionan asistencia, pon null.
+    6. Comentario: SOLO extrae dudas ("¿a qué hora?") o solicitudes ("podeis decirme la hora"). Si es un saludo, un aviso, confirmación de hora, o justificación, pon null.
 
     Ejemplo de respuesta:
     [
