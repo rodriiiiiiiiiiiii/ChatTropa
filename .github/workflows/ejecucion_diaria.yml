@@ -2,9 +2,9 @@ name: Agente IA Tropa 194
 
 on:
   schedule:
-    # Se ejecuta todos los días a las 19:00 UTC (20:00 hora peninsular española)
+    # Se ejecuta todos los días a las 19:00 UTC (20:00 hora peninsular española en invierno, 21:00 en verano)
     - cron: '0 19 * * *'
-  workflow_dispatch: # Botón mágico para ejecutarlo a mano
+  workflow_dispatch: # Botón mágico para ejecutarlo a mano desde GitHub
 
 jobs:
   ejecutar-bot:
@@ -22,7 +22,11 @@ jobs:
     - name: 📦 Instalar dependencias
       run: |
         pip install -r requirements.txt
-
+    
+    - name: 🧪 Ejecutar Tests Unitarios (Prevención de Regresiones)
+      run: |
+        pytest
+        
     - name: 🔐 Generar archivos de credenciales de Google
       env:
         GOOGLE_CREDENTIALS_B64: ${{ secrets.GOOGLE_CREDENTIALS_B64 }}
@@ -45,4 +49,5 @@ jobs:
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       run: |
-        python asistente.py
+        # Ejecutamos el punto de entrada de la nueva arquitectura
+        python main.py

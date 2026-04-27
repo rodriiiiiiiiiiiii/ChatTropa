@@ -13,9 +13,9 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 # Google Scopes
 SCOPES = [
-    'https://www.googleapis.com/auth/spreadsheets', 
-    'https://www.googleapis.com/auth/drive',
-    'https://www.googleapis.com/auth/gmail.modify'
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive",
+    "https://www.googleapis.com/auth/gmail.modify",
 ]
 
 # --- FILTRO ANTI-SPAM ---
@@ -25,11 +25,11 @@ BLACKLIST_SUBJECTS = [
     "bienvenida a la aplicación google one",
     "alerta de seguridad",
     "nuevo inicio de sesión",
-    "notificación de estado de entrega"
+    "notificación de estado de entrega",
 ]
 
 BLACKLIST_SENDERS = [
     "no-reply@google.com",
     "mail-noreply@google.com",
-    "google-noreply@google.com"
+    "google-noreply@google.com",
 ]
