@@ -1,8 +1,15 @@
-# Secretos y credenciales
+# Python
+__pycache__/
+*.pyc
+*.py[cod]
+*$py.class
+
+# Entornos Virtuales
+venv/
+env/
+.venv/
+
+# Secretos (¡FUNDAMENTAL!)
 .env
 credentials.json
 token.json
-
-# Archivos de Python que no hacen falta
-__pycache__/
-*.pyc
