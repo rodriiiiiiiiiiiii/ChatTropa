@@ -2,6 +2,7 @@ import time
 import re
 import gspread
 import logging
+from typing import List, Optional
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
