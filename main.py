@@ -10,12 +10,10 @@ from src.google_sheets_manager import GoogleSheetsManager
 from src.ia_motor import analizar_correo_unico
 
 def extraer_email_puro(remitente_raw):
-    """Extrae 'ejemplo@correo.com' de 'Nombre <ejemplo@correo.com>' (Objetivo 2)."""
     match = re.search(r'[\w\.-]+@[\w\.-]+', remitente_raw)
     return match.group(0).lower() if match else remitente_raw.lower()
 
 def es_spam_tecnico(asunto, remitente):
-    """Filtro silencioso (Objetivo 2)."""
     asunto_l = asunto.lower()
     remitente_l = remitente.lower()
     return any(s in asunto_l for s in BLACKLIST_SUBJECTS) or any(r in remitente_l for r in BLACKLIST_SENDERS)
@@ -26,13 +24,12 @@ def ejecutar_asistente():
     gc = gspread.authorize(creds)
     gmail = build('gmail', 'v1', credentials=creds)
     
-    # 2. Inicializar Manager y Datos (Objetivo 1)
+    # 2. Inicializar Manager y Datos
     gs_manager = GoogleSheetsManager(gc, "Asistencia_pruebas_IA")
     nombres_master, eventos_master = gs_manager.obtener_datos_maestros()
     mapa_correos = gs_manager.obtener_mapeo_correos()
 
     # 3. Etiquetas Gmail
-    # (Asumimos obtener_id_etiqueta definido como antes)
     id_etiq_bot = "TU_ID_PROCESADO" 
     id_etiq_rev = "TU_ID_REVISION"
 
@@ -52,13 +49,13 @@ def ejecutar_asistente():
         datos = decodificar_correo(m_full)
         if not datos: continue
 
-        # --- FILTRO ANTI-SPAM (Objetivo 2) ---
+        # --- FILTRO ANTI-SPAM ---
         if es_spam_tecnico(datos['asunto'], datos['remitente']):
             # Marcar como procesado pero no avisar a Telegram
             gmail.users().messages().modify(userId='me', id=m_id, body={'addLabelIds': [id_etiq_bot]}).execute()
             continue
 
-        # --- CRUCE DE IDENTIDAD (Objetivo 1 y 2) ---
+        # --- CRUCE DE IDENTIDAD ---
         email_limpio = extraer_email_puro(datos['remitente'])
         nombres_para_ia = mapa_correos.get(email_limpio)
         
@@ -102,7 +99,7 @@ def ejecutar_asistente():
             
         gmail.users().messages().modify(userId='me', id=m_id, body={'addLabelIds': [label_final]}).execute()
         
-        # --- RATE LIMITING (Objetivo 4) ---
+        # --- RATE LIMITING ---
         time.sleep(2) 
 
 if __name__ == '__main__':

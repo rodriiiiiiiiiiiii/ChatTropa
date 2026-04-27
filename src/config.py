@@ -18,7 +18,7 @@ SCOPES = [
     'https://www.googleapis.com/auth/gmail.modify'
 ]
 
-# --- NUEVO: FILTRO ANTI-SPAM (OBJETIVO 2) ---
+# --- FILTRO ANTI-SPAM ---
 BLACKLIST_SUBJECTS = [
     "almacenamiento de gmail",
     "delivery status notification",
