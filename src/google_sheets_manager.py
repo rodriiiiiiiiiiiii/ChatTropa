@@ -2,12 +2,13 @@ import logging
 from collections import defaultdict
 from typing import List, Tuple, Dict, Any, Set
 
+
 class GoogleSheetsManager:
     """
-    Gestiona la interacción con Google Sheets, centralizando la lectura de 
+    Gestiona la interacción con Google Sheets, centralizando la lectura de
     datos maestros, el registro de logs de procesamiento y la actualización de asistencia.
     """
-    
+
     def __init__(self, gspread_client: Any, spreadsheet_name: str) -> None:
         """
         Inicializa el cliente de Sheets y carga la caché de IDs procesados.
@@ -16,7 +17,7 @@ class GoogleSheetsManager:
         self.libro = self.gc.open(spreadsheet_name)
         self.hoja_asistencia = self.libro.worksheet("ASISTENCIA")
         self.hoja_log = self.libro.worksheet("LOG_PROCESADOS")
-        
+
         # Cargamos los IDs en un set para búsqueda O(1)
         self._cache_procesados: Set[str] = self._cargar_log_procesados()
 
@@ -27,7 +28,9 @@ class GoogleSheetsManager:
         try:
             # Obtiene todos los valores de la primera columna
             ids = self.hoja_log.col_values(1)
-            logging.info(f"Cargados {len(ids)} IDs de correos procesados anteriormente.")
+            logging.info(
+                f"Cargados {len(ids)} IDs de correos procesados anteriormente."
+            )
             return set(ids)
         except Exception as e:
             logging.error(f"Error al cargar el historial de LOG_PROCESADOS: {e}")
@@ -48,7 +51,9 @@ class GoogleSheetsManager:
             self._cache_procesados.add(message_id)
             logging.info(f"ID {message_id} registrado como procesado con éxito.")
         except Exception as e:
-            logging.error(f"Error crítico al registrar el ID {message_id} en Sheets: {e}")
+            logging.error(
+                f"Error crítico al registrar el ID {message_id} en Sheets: {e}"
+            )
 
     def obtener_datos_maestros(self) -> Tuple[List[str], List[str]]:
         """
@@ -73,7 +78,9 @@ class GoogleSheetsManager:
                         if email.strip():
                             mapa[email.strip().lower()].append(nombre_scout)
         except Exception:
-            logging.warning("No se pudo leer la pestaña CORREOS. Se usará fallback por texto.")
+            logging.warning(
+                "No se pudo leer la pestaña CORREOS. Se usará fallback por texto."
+            )
         return dict(mapa)
 
     def actualizar_asistencia(self, nombre_scout: str, evento: str, valor: str) -> bool:
@@ -83,12 +90,14 @@ class GoogleSheetsManager:
         try:
             nombres = self.hoja_asistencia.col_values(1)
             eventos = self.hoja_asistencia.row_values(2)
-            
+
             fila = nombres.index(nombre_scout) + 1
             columna = eventos.index(evento) + 1
-            
+
             self.hoja_asistencia.update_cell(fila, columna, valor)
             return True
         except (ValueError, Exception) as e:
-            logging.error(f"Error al escribir asistencia para {nombre_scout} en {evento}: {e}")
+            logging.error(
+                f"Error al escribir asistencia para {nombre_scout} en {evento}: {e}"
+            )
             return False
