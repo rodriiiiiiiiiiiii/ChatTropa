@@ -23,13 +23,13 @@ def analizar_correo_unico(
     )
 
     prompt = f"""
-    Eres el secretario de la Tropa Waconda. Analiza este correo enviado por la familia de: {nombres_familia}.
+    Eres el secretario de la Tropa Waconda. Extrae la intención de asistencia de este correo enviado por la familia de: {nombres_familia}.
     
-    REGLAS:
-    1. Genera un registro para CADA NIÑO de esta familia: {nombres_familia}.
-    2. Evento: {instruccion_evento}
-    3. Asistencia: "Sí" o "No". Si no confirman asistencia en este correo, pon null.
-    4. Comentario: Extrae SOLO dudas o peticiones reales. Si es un saludo o agradecimiento, pon null.
+    REGLAS ESTRICTAS:
+    1. MAPEO DE NOMBRES: Los padres usarán el nombre de pila o apodos (ej: "Bruno"). Debes deducir a quién se refieren y usar ÚNICAMENTE el nombre completo exacto que aparece en tu lista: {nombres_validos}.
+    2. ASISTENCIA: "Sí" o "No". Si en el correo no dicen explícitamente si van o no, pon null obligatoriamente.
+    3. EVENTO: {instruccion_evento}
+    4. COMENTARIO: Extrae dudas reales o avisos (ej: "Llegaremos tarde a Buitrago"). Si es un saludo, una firma o dicen "Gracias", pon null.
 
     CORREO:
     {texto_correo}

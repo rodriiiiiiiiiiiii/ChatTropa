@@ -29,12 +29,13 @@ def limpiar_texto_correo(texto_sucio: str) -> str:
     if not texto_sucio:
         return ""
     patrones_corte = [
-        r"Enviado desde",
-        r"El\s+\d{1,2}.*?escribió:",
-        r"De:\s+Tropa Waconda",
-        r"On\s+.*?wrote:",
-        r"_{10,}",
+        r"Enviado desde", 
+        r"El\s+.*?escribió:",
+        r"De:\s+Tropa Waconda", 
+        r"On\s+.*?wrote:", 
+        r"_{10,}"
     ]
+    
     texto_limpio = texto_sucio
     for patron in patrones_corte:
         texto_limpio = re.split(patron, texto_limpio, maxsplit=1, flags=re.IGNORECASE)[
