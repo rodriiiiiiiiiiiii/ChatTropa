@@ -32,6 +32,27 @@ def es_spam_tecnico(asunto: str, remitente: str) -> bool:
     )
 
 
+def obtener_id_etiqueta(servicio_gmail, nombre_etiqueta: str) -> str:
+    """Busca una etiqueta por nombre y devuelve su ID interno. Si no existe, la crea."""
+    etiquetas = (
+        servicio_gmail.users().labels().list(userId="me").execute().get("labels", [])
+    )
+    for etiqueta in etiquetas:
+        if etiqueta["name"].lower() == nombre_etiqueta.lower():
+            return etiqueta["id"]
+    nueva_etiqueta = {
+        "name": nombre_etiqueta,
+        "labelListVisibility": "labelShow",
+        "messageListVisibility": "show",
+    }
+    return (
+        servicio_gmail.users()
+        .labels()
+        .create(userId="me", body=nueva_etiqueta)
+        .execute()["id"]
+    )
+
+
 def ejecutar_asistente() -> None:
     """Proceso principal de lectura, análisis y registro de correos."""
     logging.info("Iniciando ciclo de Chat Tropa...")
@@ -46,9 +67,9 @@ def ejecutar_asistente() -> None:
     nombres_master, eventos_master = gs_manager.obtener_datos_maestros()
     mapa_correos = gs_manager.obtener_mapeo_correos()
 
-    # IDs de etiquetas (Reemplazar con tus IDs reales de Gmail)
-    id_etiq_bot = "PROCESADO"
-    id_etiq_rev = "REVISION"
+    # 3. Etiquetas Gmail
+    id_etiq_bot = obtener_id_etiqueta(gmail, "Procesado_IA")
+    id_etiq_rev = obtener_id_etiqueta(gmail, "Revision_Manual")
 
     # 3. Obtener mensajes recientes
     query = "in:inbox newer_than:7d -from:me"

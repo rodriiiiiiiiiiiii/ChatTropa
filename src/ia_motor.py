@@ -64,7 +64,7 @@ def analizar_correo_unico(
 
     while active_keys:
         key = active_keys[0]
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={key}"
 
         try:
             res = requests.post(url, json=payload, timeout=30)
