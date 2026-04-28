@@ -26,7 +26,7 @@ def analizar_correo_unico(
     Eres el secretario de la Tropa Waconda. Extrae la intención de asistencia de este correo enviado por la familia de: {nombres_familia}.
     
     REGLAS ESTRICTAS:
-    1. MAPEO DE NOMBRES: Los padres usarán el nombre de pila o apodos (ej: "Bruno"). Debes deducir a quién se refieren y usar ÚNICAMENTE el nombre completo exacto que aparece en tu lista: {nombres_validos}.
+    1. MAPEO DE NOMBRES: Los padres usarán el nombre de pila o apodos (ej: "Bruno"). Debes deducir a quién se refieren y usar ÚNICAMENTE el nombre completo exacto que aparece en tu lista: {nombres_familia}.
     2. ASISTENCIA: "Sí" o "No". Si en el correo no dicen explícitamente si van o no, pon null obligatoriamente.
     3. EVENTO: {instruccion_evento}
     4. COMENTARIO: Extrae dudas reales o avisos (ej: "Llegaremos tarde a Buitrago"). Si es un saludo, una firma o dicen "Gracias", pon null.
