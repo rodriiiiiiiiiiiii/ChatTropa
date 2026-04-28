@@ -7,13 +7,14 @@ from typing import List, Dict, Any, Optional
 
 def analizar_correo_unico(
     texto_correo: str,
-    nombres_validos: List[str],
+    nombres_familia: List[str],
     eventos_validos: List[str],
     evento_detectado: Optional[str],
     active_keys: List[str],
 ) -> List[Dict[str, Any]]:
     """
-    Envía un correo a la API de Google Gemini para extraer su intención estructurada.
+    Inferencia enfocada: Gemini ya sabe de quién es el correo.
+    Su misión es solo extraer la intención para esos niños.
     """
     instruccion_evento = (
         f'El evento es "{evento_detectado}".'
@@ -22,14 +23,13 @@ def analizar_correo_unico(
     )
 
     prompt = f"""
-    Eres el secretario de la Tropa Waconda. Analiza este correo.
+    Eres el secretario de la Tropa Waconda. Analiza este correo enviado por la familia de: {nombres_familia}.
     
     REGLAS:
-    1. Identifica a los niños mencionados de forma explícita.
-    2. Usa SOLO estos nombres exactos: {nombres_validos}.
-    3. Si el correo dice "mis hijos" o similar, genera un objeto por cada nombre de la lista de validación.
-    4. Evento: {instruccion_evento}
-    5. Comentario: Extrae SOLO dudas o peticiones reales (ej: "¿hay que llevar saco?").
+    1. Genera un registro para CADA NIÑO de esta familia: {nombres_familia}.
+    2. Evento: {instruccion_evento}
+    3. Asistencia: "Sí" o "No". Si no confirman asistencia en este correo, pon null.
+    4. Comentario: Extrae SOLO dudas o peticiones reales. Si es un saludo o agradecimiento, pon null.
 
     CORREO:
     {texto_correo}
@@ -37,13 +37,16 @@ def analizar_correo_unico(
 
     esquema_respuesta = {
         "type": "ARRAY",
-        "description": "Lista de objetos con la intención de cada scout.",
         "items": {
             "type": "OBJECT",
             "properties": {
                 "nombre": {"type": "STRING"},
-                "asistencia": {"type": "STRING", "enum": ["Sí", "No"]},
-                "evento": {"type": "STRING"},
+                "asistencia": {
+                    "type": "STRING",
+                    "enum": ["Sí", "No"],
+                    "nullable": True,
+                },
+                "evento": {"type": "STRING", "nullable": True},
                 "comentario_relevante": {"type": "STRING", "nullable": True},
             },
             "required": ["nombre"],
@@ -68,35 +71,25 @@ def analizar_correo_unico(
 
         try:
             res = requests.post(url, json=payload, timeout=30)
-
             if res.status_code == 200:
                 texto = res.json()["candidates"][0]["content"]["parts"][0]["text"]
                 return json.loads(texto)
-
             elif res.status_code == 429:
-                logging.warning("Cuota agotada (429). Rotando a la siguiente clave...")
+                logging.warning("Cuota agotada (429). Rotando clave...")
                 active_keys.pop(0)
-                intentos_fallidos = 0  # Reseteamos los intentos para la nueva llave
+                intentos_fallidos = 0
                 continue
-
             else:
-                logging.error(
-                    f"Error API ({res.status_code}): {res.text}. Intento {intentos_fallidos + 1}/{MAX_INTENTOS}"
-                )
+                logging.error(f"Error API ({res.status_code}): {res.text}")
                 intentos_fallidos += 1
-
         except Exception as e:
-            logging.error(
-                f"Error de conexión: {e}. Intento {intentos_fallidos + 1}/{MAX_INTENTOS}"
-            )
+            logging.error(f"Error conexión: {e}")
             intentos_fallidos += 1
 
-        # LÓGICA ANTI-BUCLES INFINITOS
         if intentos_fallidos >= MAX_INTENTOS:
-            logging.error("Límite de intentos superado. Descartando llave y rotando...")
             active_keys.pop(0)
             intentos_fallidos = 0
         else:
-            time.sleep(2)  # Pausa antes del siguiente reintento
+            time.sleep(2)
 
-    return [{"error_api": "CUOTA_AGOTADA_O_ERROR_CRITICO"}]
+    return [{"error_api": "CUOTA_AGOTADA"}]
