@@ -41,4 +41,4 @@ def test_es_spam_tecnico_correo_real():
     """Verifica que NO marca como spam un correo legítimo de un padre."""
     asunto = "Duda sobre la acampada"
     remitente = "papa_scout@gmail.com"
-    assert es_spam_tecnico(asunto, remitente)
+    assert not es_spam_tecnico(asunto, remitente)
