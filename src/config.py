@@ -26,10 +26,14 @@ BLACKLIST_SUBJECTS = [
     "alerta de seguridad",
     "nuevo inicio de sesión",
     "notificación de estado de entrega",
+    "solicitud de compartir",
+    "product update",
+    "invitación para editar",
 ]
 
 BLACKLIST_SENDERS = [
     "no-reply@google.com",
     "mail-noreply@google.com",
     "google-noreply@google.com",
+    "noreply@google.com",
 ]

@@ -116,6 +116,8 @@ def ejecutar_asistente() -> None:
             datos["raw"], nombres_para_ia, eventos_master, evento_local, active_keys
         )
 
+        logging.info(f"📧 Asunto: {datos['asunto']} | 🤖 Respuesta IA: {resultados}")
+
         procesado_con_exito = False
         resumen_tg = []
 
@@ -158,7 +160,20 @@ def ejecutar_asistente() -> None:
             gs_manager.registrar_procesado(m_id)
             label_final = id_etiq_bot
         else:
-            avisar_telegram(f"⚠️ *Revisión Manual:* {datos['asunto']}")
+            cuerpo_corto = (
+                datos["cuerpo"][:300] + "..."
+                if len(datos["cuerpo"]) > 300
+                else datos["cuerpo"]
+            )
+
+            mensaje_alerta = (
+                f"⚠️ *Revisión Manual Necesaria*\n"
+                f"👤 *De:* {datos['remitente']}\n"
+                f"📧 *Asunto:* {datos['asunto']}\n"
+                f"💬 *Mensaje:* _{cuerpo_corto}_"
+            )
+
+            avisar_telegram(mensaje_alerta)
             label_final = id_etiq_rev
 
         try:
